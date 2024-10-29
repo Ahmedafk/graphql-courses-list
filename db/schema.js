@@ -1,27 +1,37 @@
-import { GraphQLObjectType, GraphQLSchema, GraphQLString, GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLEnumType } from 'graphql';
-import { hashPassword, generateToken } from '../auth/auth.js' 
-  
-// Define types for GraphQL
+import {
+  GraphQLObjectType,
+  GraphQLSchema,
+  GraphQLString,
+  GraphQLInt,
+  GraphQLList,
+  GraphQLNonNull,
+  GraphQLEnumType
+} from 'graphql';
+import { hashPassword, generateToken } from '../auth/auth.js';
+
+// Define CourseType for course-related fields and queries
 const CourseType = new GraphQLObjectType({
   name: 'Course',
   fields: {
-    id: { type: GraphQLInt },
-    title: { type: GraphQLString },
-    category: { type: GraphQLString },
-    description: { type: GraphQLString },
-    duration: { type: GraphQLInt },
-    outcome: { type: GraphQLString },
+    id: { type: GraphQLInt },              // Unique course ID
+    title: { type: GraphQLString },         // Course title
+    category: { type: GraphQLString },      // Category of the course
+    description: { type: GraphQLString },   // Description of the course
+    duration: { type: GraphQLInt },         // Course duration in hours
+    outcome: { type: GraphQLString },       // Expected outcome of completing the course
   },
 });
 
+// Define CollectionType to group courses by category
 const CollectionType = new GraphQLObjectType({
   name: 'Collection',
   fields: {
-    id: { type: GraphQLString }, // Category name is also the ID
-    courses: { type: new GraphQLList(CourseType) },
+    id: { type: GraphQLString },                    // Category name serves as ID
+    courses: { type: new GraphQLList(CourseType) }, // List of courses in the collection
   },
 });
 
+// Define RoleType enum for user roles (Regular, Admin)
 const RoleType = new GraphQLEnumType({
   name: 'Role',
   values: {
@@ -30,17 +40,18 @@ const RoleType = new GraphQLEnumType({
   },
 });
 
+// Define UserType for user-related fields and queries
 const UserType = new GraphQLObjectType({
   name: 'User',
   fields: {
-    id: { type: GraphQLString }, // UUID
-    username: { type: GraphQLString },
-    email: { type: GraphQLString },
-    role: { type: RoleType }
+    id: { type: GraphQLString },         // Unique user ID (UUID)
+    username: { type: GraphQLString },   // User's username
+    email: { type: GraphQLString },      // User's email address
+    role: { type: RoleType }             // User role, either Regular or Admin
   },
 });
 
-// Define sorting order enumeration
+// Define SortOrderType enum for sorting order (ASC or DESC)
 const SortOrderType = new GraphQLEnumType({
   name: 'SortOrder',
   values: {
@@ -49,10 +60,11 @@ const SortOrderType = new GraphQLEnumType({
   },
 });
 
-// Root query to get courses and collections
+// RootQuery defines the primary queries for courses and collections
 const RootQuery = new GraphQLObjectType({
   name: 'RootQueryType',
   fields: {
+    // Fetch a list of courses with optional sorting and limit
     courses: {
       type: new GraphQLList(CourseType),
       args: {
@@ -64,6 +76,8 @@ const RootQuery = new GraphQLObjectType({
         return res.rows;
       },
     },
+
+    // Fetch a specific course by ID
     course: {
       type: CourseType,
       args: { id: { type: new GraphQLNonNull(GraphQLInt) } },
@@ -72,36 +86,44 @@ const RootQuery = new GraphQLObjectType({
         return res.rows[0];
       },
     },
+
+    // Fetch all collections grouped by category
     collections: {
       type: new GraphQLList(CollectionType),
       resolve: async (_, __, { client }) => {
-        const res = await client.query(`SELECT category as id,
+        const res = await client.query(`
+          SELECT category as id,
           (SELECT json_agg(cs) FROM (SELECT * FROM courses WHERE category = c.category ORDER BY id) cs) AS courses
           FROM courses c
-          GROUP BY category`);
+          GROUP BY category
+        `);
         return res.rows;
       },
     },
+
+    // Fetch a specific collection by category ID
     collection: {
       type: CollectionType,
       args: { id: { type: new GraphQLNonNull(GraphQLString) } },
       resolve: async (_, { id }, { client }) => {
-        const res = await client.query(`SELECT category as id,
+        const res = await client.query(`
+          SELECT category as id,
           (SELECT json_agg(cs) FROM (SELECT * FROM courses WHERE category = c.category ORDER BY id) cs) AS courses
           FROM courses c
           WHERE category = $1
-          GROUP BY category`, [id]);
+          GROUP BY category
+        `, [id]);
         return res.rows[0];
       },
     },
-      
   },
 });
 
-// Root mutation to add, update and delete courses
+// Mutation defines mutations for adding, updating, deleting courses, and user management
 const Mutation = new GraphQLObjectType({
   name: 'Mutation',
   fields: {
+    // Add a new course with required fields
     addCourse: {
       type: CourseType,
       args: {
@@ -120,6 +142,8 @@ const Mutation = new GraphQLObjectType({
         return res.rows[0];
       },
     },
+
+    // Update an existing course by ID with optional fields
     updateCourse: {
       type: CourseType,
       args: {
@@ -147,36 +171,34 @@ const Mutation = new GraphQLObjectType({
         return res.rows[0];
       },
     },
+
+    // Delete a course by ID, only accessible by Admin users
     deleteCourse: {
       type: CourseType,
       args: {
         id: { type: new GraphQLNonNull(GraphQLInt) },
       },
       resolve: async (_, { id }, { client, user }) => {
-        if (!user) throw new Error("Unauthorized");
-        if (user.role !== "Admin") throw new Error("Unauthorized, only admins can delete courses");
-        // get the course to return after deletion
+        if (!user || user.role !== "Admin") throw new Error("Unauthorized, only admins can delete courses");
+
+        // Fetch the course to return after deletion
         const res = await client.query('SELECT * FROM courses WHERE id = $1', [id]);
         const courseToDelete = res.rows[0];
+        if (!courseToDelete) throw new Error(`Course with ID ${id} not found`);
 
-        // throw an error if a course is not found
-        if (!courseToDelete) {
-          throw new Error(`Course with ID ${id} not found`);
-        }
-
-        // Delete the course
+        // Delete the course and return the deleted record
         await client.query('DELETE FROM courses WHERE id = $1', [id]);
-
-        // Return the deleted course
         return courseToDelete;
       },
     },
+
+    // Register a new user with hashed password
     register: {
       type: UserType,
       args: {
         username: { type: new GraphQLNonNull(GraphQLString) },
         password: { type: new GraphQLNonNull(GraphQLString) },
-        role: {type: RoleType, defaultValue: 'Regular' }
+        role: { type: RoleType, defaultValue: 'Regular' }
       },
       resolve: async (_, { username, password, role }, { client }) => {
         const hashedPassword = hashPassword(password);
@@ -187,6 +209,8 @@ const Mutation = new GraphQLObjectType({
         return res.rows[0];
       },
     },
+
+    // Login and return a JWT token if credentials are valid
     login: {
       type: GraphQLString, // Returns a JWT token
       args: {
@@ -207,6 +231,7 @@ const Mutation = new GraphQLObjectType({
   },
 });
 
+// Export the schema, including the query and mutation root types
 export default new GraphQLSchema({
   query: RootQuery,
   mutation: Mutation,
