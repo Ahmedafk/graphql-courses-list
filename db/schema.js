@@ -1,4 +1,5 @@
 import { GraphQLObjectType, GraphQLSchema, GraphQLString, GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLEnumType } from 'graphql';
+import { hashPassword, generateToken } from '../auth/auth.js' 
   
 // Define types for GraphQL
 const CourseType = new GraphQLObjectType({
@@ -18,6 +19,24 @@ const CollectionType = new GraphQLObjectType({
   fields: {
     id: { type: GraphQLString }, // Category name is also the ID
     courses: { type: new GraphQLList(CourseType) },
+  },
+});
+
+const RoleType = new GraphQLEnumType({
+  name: 'Role',
+  values: {
+    Regular: { value: 'Regular' },
+    Admin: { value: 'Admin' },
+  },
+});
+
+const UserType = new GraphQLObjectType({
+  name: 'User',
+  fields: {
+    id: { type: GraphQLString }, // UUID
+    username: { type: GraphQLString },
+    email: { type: GraphQLString },
+    role: { type: RoleType }
   },
 });
 
@@ -92,7 +111,8 @@ const Mutation = new GraphQLObjectType({
         duration: { type: new GraphQLNonNull(GraphQLInt) },
         outcome: { type: new GraphQLNonNull(GraphQLString) },
       },
-      resolve: async (_, { title, category, description, duration, outcome }, { client }) => {
+      resolve: async (_, { title, category, description, duration, outcome }, { client, user }) => {
+        if (!user) throw new Error("Unauthorized, invalid or missing token");
         const res = await client.query(
           'INSERT INTO courses (title, category, description, duration, outcome) VALUES ($1, $2, $3, $4, $5) RETURNING *',
           [title, category, description, duration, outcome]
@@ -110,7 +130,8 @@ const Mutation = new GraphQLObjectType({
         duration: { type: GraphQLInt },
         outcome: { type: GraphQLString },
       },
-      resolve: async (_, { id, title, category, description, duration, outcome }, { client }) => {
+      resolve: async (_, { id, title, category, description, duration, outcome }, { client, user }) => {
+        if (!user) throw new Error("Unauthorized, invalid or missing token");
         const res = await client.query(
           `UPDATE courses 
             SET 
@@ -131,7 +152,9 @@ const Mutation = new GraphQLObjectType({
       args: {
         id: { type: new GraphQLNonNull(GraphQLInt) },
       },
-      resolve: async (_, { id }, { client }) => {
+      resolve: async (_, { id }, { client, user }) => {
+        if (!user) throw new Error("Unauthorized");
+        if (user.role !== "Admin") throw new Error("Unauthorized, only admins can delete courses");
         // get the course to return after deletion
         const res = await client.query('SELECT * FROM courses WHERE id = $1', [id]);
         const courseToDelete = res.rows[0];
@@ -146,6 +169,39 @@ const Mutation = new GraphQLObjectType({
 
         // Return the deleted course
         return courseToDelete;
+      },
+    },
+    register: {
+      type: UserType,
+      args: {
+        username: { type: new GraphQLNonNull(GraphQLString) },
+        password: { type: new GraphQLNonNull(GraphQLString) },
+        role: {type: RoleType, defaultValue: 'Regular' }
+      },
+      resolve: async (_, { username, password, role }, { client }) => {
+        const hashedPassword = hashPassword(password);
+        const res = await client.query(
+          'INSERT INTO users (username, password, role) VALUES ($1, $2, $3) RETURNING *',
+          [username, hashedPassword, role]
+        );
+        return res.rows[0];
+      },
+    },
+    login: {
+      type: GraphQLString, // Returns a JWT token
+      args: {
+        username: { type: new GraphQLNonNull(GraphQLString) },
+        password: { type: new GraphQLNonNull(GraphQLString) }
+      },
+      resolve: async (_, { username, password }, { client }) => {
+        const res = await client.query('SELECT * FROM users WHERE username = $1', [username]);
+        const user = res.rows[0];
+        if (!user) throw new Error('User not found');
+
+        const valid = hashPassword(password) === user.password;
+        if (!valid) throw new Error('Incorrect password');
+
+        return generateToken(user); // Return the generated JWT
       },
     }
   },
