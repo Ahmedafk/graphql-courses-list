@@ -8,7 +8,7 @@ To run the development server:
 npm start
 ```
 
-Graphql APIs can now be accessed at: [http://localhost:9000/graphql](http://localhost:9000/graphql)
+Once launched, Graphql APIs can be accessed at: [http://localhost:9000/graphql](http://localhost:9000/graphql)
 
 ### Demo
 
