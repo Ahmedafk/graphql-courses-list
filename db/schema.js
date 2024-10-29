@@ -46,7 +46,6 @@ const UserType = new GraphQLObjectType({
   fields: {
     id: { type: GraphQLString },         // Unique user ID (UUID)
     username: { type: GraphQLString },   // User's username
-    email: { type: GraphQLString },      // User's email address
     role: { type: RoleType }             // User role, either Regular or Admin
   },
 });
